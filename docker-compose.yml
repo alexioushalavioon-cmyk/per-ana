@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: perana
+      POSTGRES_PASSWORD: perana
+      POSTGRES_DB: perana
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U perana -d perana"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: perana
+      MINIO_ROOT_PASSWORD: perana-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  api:
+    build:
+      context: ./apps/api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://perana:perana@postgres:5432/perana
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /data/storage
+    ports:
+      - "8000:8000"
+    volumes:
+      - localstorage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://perana:perana@postgres:5432/perana
+      REDIS_URL: redis://redis:6379/0
+      JOB_BACKEND: redis
+      LOCAL_STORAGE_PATH: /data/storage
+    volumes:
+      - localstorage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  localstorage:
